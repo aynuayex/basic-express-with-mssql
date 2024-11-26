@@ -37,10 +37,23 @@ Follow these steps to run the application locally:
 PORT=3000
 USER=yourusername
 PASSWORD=yourpassword
+ACCESS_TOKEN_SECRET=
+REFRESH_TOKEN_SECRET=
 ```
 
 please change the user value 'yourusername' and the password value 'yourpassword' to your mssql
 studio login credentials and assure that the account has the neccessary privilage to create a database.
+
+   Use Node.js REPL: Run the following commands in the Node.js runtime:
+
+   `node`
+
+   This opens the Node.js REPL (interactive environment). Then execute:
+
+   `require('crypto').randomBytes(64).toString('hex');`
+
+   It will generate a 64-byte random hex string for your secret.so run the above twice and paste it for `ACCESS_TOKEN_SECRET` and `REFRESH_TOKEN_SECRET`.
+   Finally you can exit the interactive environment(Node.js REPL) by entering `.exit` .
 
 Make sure TCP/IP connections are enabled via [SQL Server Configuration Manager](https://learn.microsoft.com/en-us/sql/relational-databases/sql-server-configuration-manager?view=sql-server-ver16) to avoid No connection could be made because the target machine actively refused it. (os error 10061)
 
@@ -49,5 +62,5 @@ Make sure TCP/IP connections are enabled via [SQL Server Configuration Manager](
     then make sure to restart the service of mssql by returning to mssql configuration and after that it is running.
     Database configuration
 
-4. Start the backend server:
+3. Start the backend server:
    `npm start`

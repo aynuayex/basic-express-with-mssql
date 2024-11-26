@@ -4,92 +4,68 @@ const jwt = require("jsonwebtoken");
 
 const handleLogin = async (req, res) => {
   try {
-    const cookie = req.cookies;
-    console.log(req.body);
+    const cookies = req.cookies;
     const { email, password, role } = req.body;
+
     if (!email || !password || !role) {
-      return res.status(400).json({
-        message: "Email, role, and password are required!",
-      });
+      return res.status(400).json({ message: "Email, role, and password are required!" });
     }
 
-    const pool = await sql.connect();
-
-    // Find user in the database
-    const userQuery = await pool
-      .request()
-      .input("email", sql.VarChar, email)
-      .input("role", sql.VarChar, role)
-      .query("SELECT * FROM Users WHERE email = @email AND role = @role");
-
+    // Fetch user from the database
+    const userQuery = await sql.query`
+      SELECT * FROM Users WHERE email = ${email} AND role = ${role}`;
     const foundUser = userQuery.recordset[0];
     if (!foundUser) return res.sendStatus(401); // Unauthorized
 
-    // Evaluate password
+    // Check password
     const match = await bcrypt.compare(password, foundUser.password);
     if (!match) return res.sendStatus(401); // Unauthorized
-    if (!foundUser.approved) return res.sendStatus(403); // Forbidden
+    if (foundUser.approved) return res.sendStatus(403); // Forbidden
 
-    // Create JWTs
+    // Create tokens
     const accessToken = jwt.sign(
       { userInfo: { fullName: foundUser.fullName, email, role } },
       process.env.ACCESS_TOKEN_SECRET,
       { expiresIn: "1h" }
     );
+
     const newRefreshToken = jwt.sign(
       { userInfo: { fullName: foundUser.fullName, email, role } },
       process.env.REFRESH_TOKEN_SECRET,
       { expiresIn: "1d" }
     );
 
-    // Handle refresh token reuse detection
-    let newRefreshTokenArray = !cookie.jwt
-      ? JSON.parse(foundUser.refreshToken || "[]")
-      : JSON.parse(foundUser.refreshToken || "[]").filter((rt) => rt !== cookie.jwt);
+    // Handle reuse detection
+    let newRefreshTokenArray = JSON.parse(foundUser.refreshToken || "[]").filter(
+      (rt) => rt !== cookies?.jwt
+    );
 
-    if (cookie?.jwt) {
-      const refreshToken = cookie.jwt;
-      const tokenQuery = await pool
-        .request()
-        .input("email", sql.VarChar, email)
-        .input("role", sql.VarChar, role)
-        .input("refreshToken", sql.VarChar, refreshToken)
-        .query(
-          "SELECT * FROM Users WHERE email = @email AND role = @role AND refreshToken LIKE '%' + @refreshToken + '%'"
-        );
-
-      if (!tokenQuery.recordset[0]) {
-        console.log("Attempted refresh token reuse at login!");
-        newRefreshTokenArray = []; // Clear all refresh tokens
-      }
-
-      res.clearCookie("jwt", {
-        httpOnly: true,
-        sameSite: "None",
-        secure: true,
-      });
+    if (cookies?.jwt && !newRefreshTokenArray.includes(cookies.jwt)) {
+      console.log("Detected reuse of invalid refresh token.");
+      newRefreshTokenArray = []; // Clear all tokens
     }
 
-    // Update user with new refresh token
-    newRefreshTokenArray.push(newRefreshToken);
-    await pool
-      .request()
-      .input("email", sql.VarChar, email)
-      .input("role", sql.VarChar, role)
-      .input("refreshToken", sql.VarChar, JSON.stringify(newRefreshTokenArray))
-      .query(
-        "UPDATE Users SET refreshToken = @refreshToken WHERE email = @email AND role = @role"
-      );
+    res.clearCookie("jwt", { httpOnly: true, sameSite: "None", 
+      // secure: true
+     });
 
+    // Update database with the new refresh token
+    newRefreshTokenArray.push(newRefreshToken);
+    await sql.query`
+      UPDATE Users
+      SET refreshToken = ${JSON.stringify(newRefreshTokenArray)}
+      WHERE email = ${email} AND role = ${role}`;
+
+    // Send new refresh token as a cookie
     res.cookie("jwt", newRefreshToken, {
       httpOnly: true,
       sameSite: "None",
-      secure: true,
+      // secure: true,
       maxAge: 24 * 60 * 60 * 1000,
     });
 
     res.status(200).json({
-      success: `Success, Logged in as ${foundUser.fullName}!`,
+      success: `Logged in as ${foundUser.fullName}`,
       id: foundUser.id,
       email,
       fullName: foundUser.fullName,

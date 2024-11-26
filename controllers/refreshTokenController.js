@@ -7,16 +7,13 @@ const handleRefreshToken = async (req, res) => {
     if (!cookies?.jwt) return res.sendStatus(401);
 
     const refreshToken = cookies.jwt;
-    res.clearCookie("jwt", { httpOnly: true, sameSite: "None", secure: true });
-
-    const pool = await sql.connect();
+    res.clearCookie("jwt", { httpOnly: true, sameSite: "None", 
+      // secure: true
+     });
 
     // Check if refreshToken exists in the database
-    const userQuery = await pool
-      .request()
-      .input("refreshToken", sql.VarChar, refreshToken)
-      .query("SELECT * FROM Users WHERE refreshToken LIKE '%' + @refreshToken + '%'");
-
+    const userQuery = await sql.query`
+      SELECT * FROM Users WHERE refreshToken LIKE '%' + ${refreshToken} + '%'`;
     const foundUser = userQuery.recordset[0];
 
     // Detected refresh token reuse
@@ -26,17 +23,13 @@ const handleRefreshToken = async (req, res) => {
         process.env.REFRESH_TOKEN_SECRET,
         async (err, decoded) => {
           if (err) return res.sendStatus(403); // Forbidden (expired)
-          const { fullName, email, role } = decoded.userInfo;
+          const { email, role } = decoded.userInfo;
 
           // Clear all refresh tokens for the hacked user
-          await pool
-            .request()
-            .input("email", sql.VarChar, email)
-            .input("role", sql.VarChar, role)
-            .input("refreshToken", sql.VarChar, JSON.stringify([]))
-            .query(
-              "UPDATE Users SET refreshToken = @refreshToken WHERE email = @email AND role = @role"
-            );
+          await sql.query`
+            UPDATE Users 
+            SET refreshToken = ${JSON.stringify([])} 
+            WHERE email = ${email} AND role = ${role}`;
         }
       );
       return res.sendStatus(403); // Forbidden
@@ -52,24 +45,18 @@ const handleRefreshToken = async (req, res) => {
       refreshToken,
       process.env.REFRESH_TOKEN_SECRET,
       async (err, decoded) => {
-        const { fullName, email, role } = foundUser;
-
-        if (err) {
-          // Token expired
-          await pool
-            .request()
-            .input("email", sql.VarChar, email)
-            .input("role", sql.VarChar, role)
-            .input("refreshToken", sql.VarChar, JSON.stringify(newRefreshTokenArray))
-            .query(
-              "UPDATE Users SET refreshToken = @refreshToken WHERE email = @email AND role = @role"
-            );
+        if (err || foundUser.fullName !== decoded.userInfo.fullName) {
+          // Clear expired or invalid tokens
+          await sql.query`
+            UPDATE Users 
+            SET refreshToken = ${JSON.stringify(newRefreshTokenArray)} 
+            WHERE email = ${foundUser.email} AND role = ${foundUser.role}`;
           return res.sendStatus(403); // Forbidden
         }
 
-        if (err || fullName !== decoded.userInfo.fullName) return res.sendStatus(403); // Forbidden
-
         // RefreshToken is valid
+        const { fullName, email, role } = decoded.userInfo;
+
         const accessToken = jwt.sign(
           { userInfo: { fullName, email, role } },
           process.env.ACCESS_TOKEN_SECRET,
@@ -83,23 +70,15 @@ const handleRefreshToken = async (req, res) => {
         );
 
         // Save new refreshToken in the database
-        await pool
-          .request()
-          .input("email", sql.VarChar, email)
-          .input("role", sql.VarChar, role)
-          .input(
-            "refreshToken",
-            sql.VarChar,
-            JSON.stringify([...newRefreshTokenArray, newRefreshToken])
-          )
-          .query(
-            "UPDATE Users SET refreshToken = @refreshToken WHERE email = @email AND role = @role"
-          );
+        await sql.query`
+          UPDATE Users 
+          SET refreshToken = ${JSON.stringify([...newRefreshTokenArray, newRefreshToken])} 
+          WHERE email = ${email} AND role = ${role}`;
 
         res.cookie("jwt", newRefreshToken, {
           httpOnly: true,
           sameSite: "None",
-          secure: true,
+          // secure: true,
           maxAge: 24 * 60 * 60 * 1000,
         });
 

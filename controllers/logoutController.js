@@ -2,45 +2,33 @@ const sql = require("mssql");
 
 const handleLogout = async (req, res) => {
   try {
-    // On client, also delete the accessToken
     const cookies = req.cookies;
     if (!cookies?.jwt) return res.sendStatus(204); // No content
+
     const refreshToken = cookies.jwt;
 
-    const pool = await sql.connect();
-
-    // Check if refreshToken exists in the database
-    const userQuery = await pool
-      .request()
-      .input("refreshToken", sql.VarChar, refreshToken)
-      .query("SELECT * FROM Users WHERE refreshToken LIKE '%' + @refreshToken + '%'");
-    
+    // Find user with the provided refresh token
+    const userQuery = await sql.query`
+      SELECT * FROM Users WHERE refreshToken LIKE '%' + ${refreshToken} + '%'`;
     const foundUser = userQuery.recordset[0];
-    if (!foundUser) {
-      res.clearCookie("jwt", {
-        httpOnly: true,
-        sameSite: "None",
-        secure: true,
-      });
-      return res.sendStatus(204);
-    }
 
-    // Remove refreshToken from the database
-    const newRefreshTokenArray = JSON.parse(foundUser.refreshToken || "[]").filter(
-      (rt) => rt !== refreshToken
-    );
-
-    await pool
-      .request()
-      .input("email", sql.VarChar, foundUser.email)
-      .input("role", sql.VarChar, foundUser.role)
-      .input("refreshToken", sql.VarChar, JSON.stringify(newRefreshTokenArray))
-      .query(
-        "UPDATE Users SET refreshToken = @refreshToken WHERE email = @email AND role = @role"
+    if (foundUser) {
+      // Remove the refresh token from the database
+      const updatedTokens = JSON.parse(foundUser.refreshToken || "[]").filter(
+        (rt) => rt !== refreshToken
       );
 
-    res.clearCookie("jwt", { httpOnly: true, sameSite: "None", secure: true }); // secure: true - only serves on https
-    return res.sendStatus(204);
+      await sql.query`
+        UPDATE Users
+        SET refreshToken = ${JSON.stringify(updatedTokens)}
+        WHERE email = ${foundUser.email} AND role = ${foundUser.role}`;
+    }
+
+    // Clear the cookie regardless of user existence
+    res.clearCookie("jwt", { httpOnly: true, sameSite: "None", 
+      // secure: true
+     });
+    res.sendStatus(204); // No content
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
