@@ -20,7 +20,7 @@ const handleLogin = async (req, res) => {
     // Check password
     const match = await bcrypt.compare(password, foundUser.password);
     if (!match) return res.sendStatus(401); // Unauthorized
-    if (foundUser.approved) return res.sendStatus(403); // Forbidden
+    if (!foundUser.approved) return res.sendStatus(403); // Forbidden
 
     // Create tokens
     const accessToken = jwt.sign(
